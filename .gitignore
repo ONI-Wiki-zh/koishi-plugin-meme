@@ -1,0 +1,17 @@
+# ide
+.idea
+.vscode
+
+# build data
+**/dist
+**/lib
+
+# run data
+.koishi
+data
+logs
+**/node_modules
+*.lock
+*.log
+*temp*
+tsconfig.tsbuildinfo
