@@ -63,6 +63,7 @@ export default class MemesProvider extends DataService<string[]> {
 
   get(forced = false): Promise<string[]> {
     if (forced) delete this.task;
-    return (this.task ||= this.getInfo());
+    this.task ||= this.getInfo();
+    return this.task;
   }
 }
