@@ -18,6 +18,8 @@
 | `gimpCommand` | `gimp` (Windows 下为 `gimp-console-2.10.exe`) | GIMP 命令 |
 | `imgDir` | `memes` | xcf 图片所在文件夹路径 |
 | `tempOut` | `temp.png` | 生成的临时图片所在的路径 |
+| `authority.upload` | 2 | 在控制台添加梗图模板所需的权限等级 |
+| `authority.delete` | 3 | 在控制台删除梗图模板所需的权限等级 |
  
 ## 运行需求
 需要 koishi v4，并安装 GIMP（如果不配置 `gimpCommand` 的话，需要安装后将 `bin` 文件夹加入 `path` 环境变量）。

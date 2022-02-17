@@ -32,18 +32,26 @@ export default class MemesProvider extends DataService<string[]> {
       prod: resolve(__dirname, '../dist'),
     });
 
-    ctx.console.addListener('meme/upload', async (name, file) => {
-      await promisify(fs.writeFile)(
-        path.join(config.imgDir, `${name}.xcf`),
-        file.replace(/^data:.+?;base64,/, ''),
-        'base64',
-      );
-      this.refresh();
-    });
-    ctx.console.addListener('meme/delete', async (name) => {
-      await promisify(fs.unlink)(path.join(config.imgDir, `${name}.xcf`));
-      this.refresh();
-    });
+    ctx.console.addListener(
+      'meme/upload',
+      async (name, file) => {
+        await promisify(fs.writeFile)(
+          path.join(config.imgDir, `${name}.xcf`),
+          file.replace(/^data:.+?;base64,/, ''),
+          'base64',
+        );
+        this.refresh();
+      },
+      { authority: config.authority.upload },
+    );
+    ctx.console.addListener(
+      'meme/delete',
+      async (name) => {
+        await promisify(fs.unlink)(path.join(config.imgDir, `${name}.xcf`));
+        this.refresh();
+      },
+      { authority: config.authority.delete },
+    );
     ctx.console.addListener('meme/refresh', () => this.refresh());
   }
 

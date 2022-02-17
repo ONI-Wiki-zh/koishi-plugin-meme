@@ -1,16 +1,44 @@
-import fs from 'fs';
-import { promisify } from 'util';
-import { Logger } from 'koishi';
-import path from 'path';
 import { spawn } from 'child_process';
+import fs from 'fs';
+import { Logger, Schema, Time } from 'koishi';
+import os from 'os';
+import path from 'path';
+import { promisify } from 'util';
 
 export type ResolvedConfig = {
   gimpCommand: string;
   imgDir: string;
   tempOut: string;
   minInterval: number;
+  authority: {
+    upload: number;
+    delete: number;
+  };
 };
-
+type RecursivePartial<T> = {
+  [P in keyof T]?: RecursivePartial<T[P]>;
+};
+export type Config = RecursivePartial<ResolvedConfig>;
+export const Config: Schema<Config> = Schema.object({
+  gimpCommand: Schema.string()
+    .description('GIMP 命令')
+    .default(os.platform() === 'win32' ? 'gimp-console-2.10.exe' : 'gimp'),
+  imgDir: Schema.string()
+    .description('xcf 图片所在文件夹路径')
+    .default('memes'),
+  tempOut: Schema.string()
+    .description('生成的临时图片所在的路径')
+    .default('temp.png'),
+  minInterval: Schema.number()
+    .description('梗图生成命令的速率限制')
+    .default(Time.minute),
+  authority: Schema.object({
+    upload: Schema.number().description('添加模板').default(2),
+    delete: Schema.number().description('删除模板').default(3),
+  })
+    .description('控制台权限需求')
+    .default({}),
+});
 const logger = new Logger('meme');
 
 function escapeScm(str: string): string {

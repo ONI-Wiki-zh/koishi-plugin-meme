@@ -1,7 +1,6 @@
 import {} from '@koishijs/plugin-rate-limit';
-import { Context, Schema, segment, Time } from 'koishi';
+import { Context, segment } from 'koishi';
 import { lookpath } from 'lookpath';
-import os from 'os';
 import MemesProvider from './uploader';
 import {
   generateMeme,
@@ -10,22 +9,7 @@ import {
   ResolvedConfig,
 } from './utils';
 
-export type Config = Partial<ResolvedConfig>;
-export const Config: Schema<Config> = Schema.object({
-  gimpCommand: Schema.string()
-    .description('GIMP 命令')
-    .default(os.platform() === 'win32' ? 'gimp-console-2.10.exe' : 'gimp'),
-  imgDir: Schema.string()
-    .description('xcf 图片所在文件夹路径')
-    .default('memes'),
-  tempOut: Schema.string()
-    .description('生成的临时图片所在的路径')
-    .default('temp.png'),
-  minInterval: Schema.number()
-    .description('梗图生成命令的速率限制')
-    .default(Time.minute),
-});
-
+export { Config } from './utils';
 export const name = 'meme';
 export async function apply(
   ctx: Context,

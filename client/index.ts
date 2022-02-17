@@ -7,5 +7,6 @@ export default (ctx: Context): void => {
     name: '梗图生成器',
     path: '/meme',
     component: Page,
+    authority: 1,
   });
 };
