@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../dist",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "types": [ "@koishijs/client/global" ],
+  },
+  "include": ["."],
+}

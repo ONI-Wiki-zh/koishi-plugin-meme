@@ -4,6 +4,10 @@
     "commonjs": true,
     "es2021": true
   },
+  "ignorePatterns": [
+    "lib",
+    "dist"
+  ],
   "extends": [
     "plugin:prettier/recommended",
     "plugin:@typescript-eslint/recommended",
@@ -21,5 +25,16 @@
   "rules": {
     "@typescript-eslint/explicit-function-return-type": 1
     // "@typescript-eslint/no-explicit-any": 0
-  }
+  },
+  "overrides": [
+    {
+      "files": "./client/**",
+      "parser": "vue-eslint-parser",
+      "parserOptions": {
+        "parser": "@typescript-eslint/parser",
+        "sourceType": "module",
+        "project": "./client/tsconfig.json"
+      }
+    }
+  ]
 }

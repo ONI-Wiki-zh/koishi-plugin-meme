@@ -1,20 +1,38 @@
 {
   "name": "koishi-plugin-meme",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
+  "description": "Meme generator for Koishi based on GIMP.",
+  "keywords": [
+    "GIMP",
+    "meme",
+    "generator",
+    "koishi",
+    "koishi.js",
+    "onebot",
+    "cqhttp",
+    "qqbot",
+    "optional:console"
+  ],
   "files": [
-    "lib"
+    "lib",
+    "dist"
   ],
   "scripts": {
     "lint": "eslint . --fix",
     "test": "mocha tests",
-    "build": "tsc --build && copyfiles -u 1 src/**/*.scm lib/",
+    "build": "yarn build:src & yarn build:client",
+    "build:src": "tsc --build && copyfiles -u 1 src/**/*.scm lib/",
+    "build:client": "koishi-console build",
     "watch": "tsc --watch"
   },
   "author": "DDElephant <andy-ding@outlook.com>",
   "license": "MIT",
+  "repository": "https://github.com/ONI-Wiki-zh/koishi-plugin-meme",
   "devDependencies": {
+    "@koishijs/client": "^3.0.2",
+    "@koishijs/plugin-console": "^3.0.2",
     "@koishijs/plugin-mock": "^1.0.2",
     "@types/chai": "^4.3.0",
     "@types/mocha": "^9.1.0",
@@ -23,9 +41,12 @@
     "@typescript-eslint/parser": "^5.12.0",
     "chai": "^4.3.6",
     "copyfiles": "^2.4.1",
+    "element-plus": "^2.0.2",
     "eslint": "^8.9.0",
     "eslint-config-prettier": "^8.3.0",
     "eslint-plugin-prettier": "^4.0.0",
+    "eslint-plugin-vue": "^8.4.1",
+    "lookpath": "^1.2.2",
     "mocha": "^9.2.0",
     "nyc": "^15.1.0",
     "prettier": "^2.5.1",
@@ -36,6 +57,7 @@
     "koishi": "^4.2.1"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^0.2.7",
     "@koishijs/plugin-rate-limit": "^1.0.3",
     "lookpath": "^1.2.2"
   }
