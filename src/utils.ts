@@ -6,7 +6,8 @@ import path from 'path';
 import { promisify } from 'util';
 
 export type ResolvedConfig = {
-  gimpCommand: string;
+  gimpPath: string;
+  inkscapePath: string;
   imgDir: string;
   tempOut: string;
   minInterval: number;
@@ -20,12 +21,13 @@ type RecursivePartial<T> = {
 };
 export type Config = RecursivePartial<ResolvedConfig>;
 export const Config: Schema<Config> = Schema.object({
-  gimpCommand: Schema.string()
-    .description('GIMP 命令')
+  gimpPath: Schema.string()
+    .description('GIMP 路径')
     .default(os.platform() === 'win32' ? 'gimp-console-2.10.exe' : 'gimp'),
-  imgDir: Schema.string()
-    .description('xcf 图片所在文件夹路径')
-    .default('memes'),
+  inkscapePath: Schema.string()
+    .description('inkscape 路径')
+    .default(os.platform() === 'win32' ? 'inkscape.com' : 'inkscape'),
+  imgDir: Schema.string().description('梗图模板文件所在路径').default('memes'),
   tempOut: Schema.string()
     .description('生成的临时图片所在的路径')
     .default('temp.png'),
@@ -89,24 +91,39 @@ export class MissingMemeTemplateError extends Error {
   }
 }
 
-export function getMemes(dir: fs.PathLike): Promise<string[]> {
-  return promisify(fs.readdir)(dir);
+export async function startInkscape(inkscapePath: string) {
+  const shell = spawn(inkscapePath, ['--shell']);
+  shell.on('error', (e) => {
+    throw e;
+  });
+  shell.stderr.setEncoding('utf-8');
+  shell.stdout.setEncoding('utf-8');
+  shell.stdin.setDefaultEncoding('utf-8');
+  shell.stderr.on('data', (msg) => logger.debug('Inkscape stderr', msg.trim()));
+  shell.stdout.on('data', (msg) => logger.debug('Inkscape stdout', msg.trim()));
+  shell.on('close', (code) => {
+    throw new Error(`Inkscape closed with code ${code}`);
+  });
+  return shell;
 }
 
-export async function generateMeme(
+export async function getMemes(dir: fs.PathLike): Promise<string[]> {
+  return (await promisify(fs.readdir)(dir)).filter(
+    (f) => f.endsWith('.svg') || f.endsWith('.xcf'),
+  );
+}
+
+export async function generateMemeGIMP(
   options: {
-    name: string;
-    imgDir: string;
+    file: string;
     tempOut: string;
-    gimpCommand: string;
+    gimpPath: string;
   },
   ...args: string[]
 ): Promise<Buffer> {
-  const imagePath = path.join(options.imgDir, `${options.name}.xcf`);
-  if (!fs.existsSync(imagePath)) throw new MissingMemeTemplateError(imagePath);
   const script = replaceScript(
     await scmTemplate,
-    imagePath,
+    options.file,
     options.tempOut,
     args.reduce((o, v, i) => {
       o[`$${i + 1}`] = v;
@@ -115,7 +132,7 @@ export async function generateMeme(
   );
   logger.debug(script);
 
-  const childProcess = spawn(options.gimpCommand, [
+  const childProcess = spawn(options.gimpPath, [
     '-c',
     '--no-interface',
     '-b',
@@ -134,4 +151,43 @@ export async function generateMeme(
     });
   });
   return await promisify(fs.readFile)(options.tempOut);
+}
+
+export async function generateMemeInkscape(
+  options: {
+    file: string;
+    tempOut: string;
+    shell: Awaited<ReturnType<typeof startInkscape>>;
+  },
+  ...args: string[]
+): Promise<Buffer> {
+  const svgCode = await promisify(fs.readFile)(options.file, {
+    encoding: 'utf-8',
+  });
+  const changedSvgCode = args.reduce(
+    (svg, value, idx) => svg.replace(`__$${idx + 1}__`, value),
+    svgCode,
+  );
+  await promisify(fs.writeFile)('temp.svg', changedSvgCode, {
+    encoding: 'utf-8',
+  });
+
+  options.shell.stdin.cork();
+  options.shell.stdin.write(
+    `file-open:temp.svg; export-type:png; export-filename:${options.tempOut}; export-do; file-close\n`,
+  );
+  options.shell.stdin.uncork();
+
+  await new Promise<void>((res) => {
+    const listener = (msg: string): void => {
+      if (msg === '> ') {
+        res();
+        options.shell.stdout.off('data', listener);
+      }
+    };
+    options.shell.stdout.on('data', listener);
+  });
+  const buffer = await promisify(fs.readFile)(options.tempOut);
+  // promisify(fs.unlink)(options.tempOut);
+  return buffer;
 }
