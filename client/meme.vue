@@ -5,7 +5,7 @@
       drag
       action="never"
       multiple
-      :accept="'.xcf'"
+      :accept="'.xcf,.svg'"
       :http-request="upload"
       :before-remove="(onRemove as any)"
       :file-list="(store.memes || []).map<UploadFile>(name => ({
@@ -44,7 +44,8 @@ function refresh(): void {
 async function upload(request: { file: File, onError: Function, onProgress: Function, onSuccess: Function }): Promise<void> {
   try {
     console.log(request)
-    if (!request.file.name.endsWith('.xcf')) throw new Error('请上传 xcf 文件')
+    if (!request.file.name.toLowerCase().endsWith('.xcf') && !request.file.name.toLowerCase().endsWith('.svg')) 
+      throw new Error('请上传 xcf 文件')
     const dataUri: string = await new Promise((res, rej) => {
       const r = new FileReader()
       r.readAsDataURL(request.file)
@@ -52,7 +53,7 @@ async function upload(request: { file: File, onError: Function, onProgress: Func
       r.onerror = error => rej(error);
     })
     request.onProgress(new Event('progress'))
-    await send('meme/upload', request.file.name.slice(0, -4), dataUri)
+    await send('meme/upload', request.file.name, dataUri)
     request.onSuccess(new Event('success'))
   } catch (e) {
     request.onError(e)
@@ -63,7 +64,7 @@ async function upload(request: { file: File, onError: Function, onProgress: Func
 }
 async function onRemove(file: UploadFile, _fileList: UploadFile[]): Promise<boolean> {
   try {
-    await send('meme/delete', file.name.slice(0, -4))
+    await send('meme/delete', file.name)
   } catch (e) {
     if (e instanceof Error) message.error(`删除失败：${e.message || e.name}`)
     else message.error(`${file.name} 删除失败：${e}`)

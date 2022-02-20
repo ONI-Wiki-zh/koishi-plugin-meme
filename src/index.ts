@@ -102,8 +102,10 @@ export async function apply(
     });
 
   ctx.command('meme.list', '列出梗图模板').action(async () => {
-    return (await getMemes(config.imgDir))
-      .map((f, i) => `${i + 1}. ${f.slice(0, -4)}`)
+    const names = (await getMemes(config.imgDir)).map((n) => n.slice(0, -4));
+    return [...new Set(names)]
+      .sort()
+      .map((n, i) => `${i + 1}. ${n}`)
       .slice(0, 20)
       .join('\n');
   });

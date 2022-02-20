@@ -36,7 +36,7 @@ export default class MemesProvider extends DataService<string[]> {
       'meme/upload',
       async (name, file) => {
         await promisify(fs.writeFile)(
-          path.join(config.imgDir, `${name}.xcf`),
+          path.join(config.imgDir, name),
           file.replace(/^data:.+?;base64,/, ''),
           'base64',
         );
@@ -47,7 +47,7 @@ export default class MemesProvider extends DataService<string[]> {
     ctx.console.addListener(
       'meme/delete',
       async (name) => {
-        await promisify(fs.unlink)(path.join(config.imgDir, `${name}.xcf`));
+        await promisify(fs.unlink)(path.join(config.imgDir, name));
         this.refresh();
       },
       { authority: config.authority.delete },
@@ -55,10 +55,8 @@ export default class MemesProvider extends DataService<string[]> {
     ctx.console.addListener('meme/refresh', () => this.refresh());
   }
 
-  async getInfo(): Promise<string[]> {
-    return (await getMemes(this.config.imgDir)).filter((n) =>
-      n.endsWith('.xcf'),
-    );
+  getInfo(): Promise<string[]> {
+    return getMemes(this.config.imgDir);
   }
 
   get(forced = false): Promise<string[]> {
