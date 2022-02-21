@@ -1,9 +1,11 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { Logger, Schema, Time } from 'koishi';
+import { Context, Logger, Schema, Time } from 'koishi';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { Flag } from '.';
+import Inkscape from './inkscape';
 
 export type ResolvedConfig = {
   gimpPath: string;
@@ -14,33 +16,41 @@ export type ResolvedConfig = {
   authority: {
     upload: number;
     delete: number;
+    approve: number;
   };
+  listLimit: number;
 };
 type RecursivePartial<T> = {
   [P in keyof T]?: RecursivePartial<T[P]>;
 };
-export type Config = RecursivePartial<ResolvedConfig>;
-export const Config: Schema<Config> = Schema.object({
-  gimpPath: Schema.string()
-    .description('GIMP 路径')
-    .default(os.platform() === 'win32' ? 'gimp-console-2.10.exe' : 'gimp'),
-  inkscapePath: Schema.string()
-    .description('inkscape 路径')
-    .default(os.platform() === 'win32' ? 'inkscape.com' : 'inkscape'),
-  imgDir: Schema.string().description('梗图模板文件所在路径').default('memes'),
-  tempOut: Schema.string()
-    .description('生成的临时图片所在的路径')
-    .default('temp.png'),
-  minInterval: Schema.number()
-    .description('梗图生成命令的速率限制')
-    .default(Time.minute),
-  authority: Schema.object({
-    upload: Schema.number().description('添加模板').default(2),
-    delete: Schema.number().description('删除模板').default(3),
-  })
-    .description('控制台权限需求')
-    .default({}),
-});
+export type Config = RecursivePartial<ResolvedConfig> & Inkscape.Config;
+export const Config: Schema<Config> = Schema.intersect([
+  Schema.object({
+    gimpPath: Schema.string()
+      .description('GIMP 路径')
+      .default(os.platform() === 'win32' ? 'gimp-console-2.10.exe' : 'gimp'),
+    imgDir: Schema.string()
+      .description('梗图模板文件所在路径')
+      .default('memes'),
+    tempOut: Schema.string()
+      .description('生成的临时图片所在的路径')
+      .default('temp.png'),
+    minInterval: Schema.number()
+      .description('梗图生成命令的速率限制')
+      .default(Time.minute),
+    authority: Schema.object({
+      upload: Schema.number().description('添加模板').default(2),
+      delete: Schema.number().description('删除模板').default(3),
+      approve: Schema.number().description('批准模板').default(3),
+    })
+      .description('控制台权限需求')
+      .default({}),
+    listLimit: Schema.number()
+      .description('显示梗图列表时的最大长度')
+      .default(10),
+  }),
+  Inkscape.Config,
+]);
 const logger = new Logger('meme');
 
 function escapeScm(str: string): string {
@@ -91,40 +101,39 @@ export class MissingMemeTemplateError extends Error {
   }
 }
 
-export async function startInkscape(inkscapePath: string) {
-  const shell = spawn(inkscapePath, ['--shell']);
-  shell.on('error', (e) => {
-    throw e;
-  });
-  shell.stderr.setEncoding('utf-8');
-  shell.stdout.setEncoding('utf-8');
-  shell.stdin.setDefaultEncoding('utf-8');
-  shell.stderr.on('data', (msg) => logger.debug('Inkscape stderr', msg.trim()));
-  shell.stdout.on('data', (msg) => logger.debug('Inkscape stdout', msg.trim()));
-  shell.on('close', (code) => {
-    throw new Error(`Inkscape closed with code ${code}`);
-  });
-  return shell;
+export async function getMemesPending(ctx: Context): Promise<string[]> {
+  const records = ctx.database ? await ctx.database.get('meme', {}) : [];
+  console.log(records);
+  return records
+    .filter((r) => !(r.flag & Flag.approved))
+    .map((r) => r.filename);
 }
 
-export async function getMemes(dir: fs.PathLike): Promise<string[]> {
+export async function getMemes(
+  dir: fs.PathLike,
+  /** use ctx to get approved memes */
+  ctx?: Context,
+): Promise<string[]> {
+  const pendingApprove = ctx ? await getMemesPending(ctx) : [];
   return (await promisify(fs.readdir)(dir)).filter(
-    (f) => f.endsWith('.svg') || f.endsWith('.xcf'),
+    (f) =>
+      !pendingApprove.includes(f) && (f.endsWith('.svg') || f.endsWith('.xcf')),
   );
 }
 
 export async function generateMemeGIMP(
   options: {
+    /** With extension */
     file: string;
-    tempOut: string;
+    outPath: string;
     gimpPath: string;
   },
   ...args: string[]
-): Promise<Buffer> {
+): Promise<void> {
   const script = replaceScript(
     await scmTemplate,
     options.file,
-    options.tempOut,
+    options.outPath,
     args.reduce((o, v, i) => {
       o[`$${i + 1}`] = v;
       return o;
@@ -150,17 +159,17 @@ export async function generateMemeGIMP(
       res(code);
     });
   });
-  return await promisify(fs.readFile)(options.tempOut);
 }
 
 export async function generateMemeInkscape(
   options: {
+    ctx: Context;
+    /** With extension */
     file: string;
-    tempOut: string;
-    shell: Awaited<ReturnType<typeof startInkscape>>;
+    outPath: string;
   },
   ...args: string[]
-): Promise<Buffer> {
+): Promise<void> {
   const svgCode = await promisify(fs.readFile)(options.file, {
     encoding: 'utf-8',
   });
@@ -171,23 +180,28 @@ export async function generateMemeInkscape(
   await promisify(fs.writeFile)('temp.svg', changedSvgCode, {
     encoding: 'utf-8',
   });
+  await options.ctx.inkscape.svg2png('temp.svg', options.outPath);
+}
 
-  options.shell.stdin.cork();
-  options.shell.stdin.write(
-    `file-open:temp.svg; export-type:png; export-filename:${options.tempOut}; export-do; file-close\n`,
+export function formatList(
+  list: string[],
+  paging: {
+    size: number;
+    /** Starting from 0 */
+    pageNum: number;
+  } = { size: Infinity, pageNum: 0 },
+): string {
+  let suffix = '';
+  if (paging.pageNum < 0 || paging.pageNum % 1) return '页码必须为正整数';
+  const maxPage = Math.ceil(list.length / paging.size);
+  if (paging.pageNum >= maxPage) return `页码不能超过 ${maxPage}`;
+  if (paging.size < list.length) suffix += `\n... 共 ${list.length} 条结果`;
+
+  const offset = paging.size * paging.pageNum || 0;
+  return (
+    list
+      .slice(offset, offset + paging.size)
+      .map((n, i) => `${i + offset + 1}. ${n}`)
+      .join('\n') + suffix
   );
-  options.shell.stdin.uncork();
-
-  await new Promise<void>((res) => {
-    const listener = (msg: string): void => {
-      if (msg === '> ') {
-        res();
-        options.shell.stdout.off('data', listener);
-      }
-    };
-    options.shell.stdout.on('data', listener);
-  });
-  const buffer = await promisify(fs.readFile)(options.tempOut);
-  // promisify(fs.unlink)(options.tempOut);
-  return buffer;
 }

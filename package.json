@@ -13,7 +13,8 @@
     "onebot",
     "cqhttp",
     "qqbot",
-    "optional:console"
+    "optional:console",
+    "optional:database"
   ],
   "files": [
     "lib",

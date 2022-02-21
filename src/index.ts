@@ -3,26 +3,43 @@ import fs from 'fs';
 import { Context, segment } from 'koishi';
 import { lookpath } from 'lookpath';
 import path from 'path';
+import { promisify } from 'util';
+import Inkscape from './inkscape';
 import MemesProvider from './uploader';
 import {
+  formatList,
   generateMemeGIMP,
   generateMemeInkscape,
   getMemes,
+  getMemesPending,
   MissingMemeTemplateError,
   ResolvedConfig,
-  startInkscape,
 } from './utils';
 
 export * from './uploader';
 export * from './utils';
 export { Config } from './utils';
+
+export enum Flag {
+  approved = 1,
+}
+
+declare module 'koishi' {
+  interface Tables {
+    meme: {
+      filename: string;
+      flag: number;
+      author?: number;
+    };
+  }
+}
+
 export const name = 'meme';
 export async function apply(
   ctx: Context,
   config: ResolvedConfig,
 ): Promise<void> {
   const logger = ctx.logger('meme');
-  let inkscapeShell: Awaited<ReturnType<typeof startInkscape>>;
   ctx.on('ready', async () => {
     const gimpPath = await lookpath(config.gimpPath, {});
     if (gimpPath) logger.info(`GIMP location: ${gimpPath}`);
@@ -32,23 +49,30 @@ export async function apply(
       const inkscapePath = await lookpath(config.inkscapePath, {});
       if (inkscapePath) {
         logger.info(`Inkscape location: ${inkscapePath}`);
-        inkscapeShell = await startInkscape(config.inkscapePath);
+        ctx.plugin(Inkscape, config);
       } else logger.error(`Can not find Inkscape with ${config.inkscapePath}`);
     } catch (e) {
       throw new Error(`Inkscape init error`);
     }
   });
-  ctx.on('dispose', async () => {
-    if (!inkscapeShell) return;
-    inkscapeShell.stdin.cork();
-    inkscapeShell.stdin.write('quit\n');
-    inkscapeShell.stdin.uncork();
-    await new Promise<void>((res) => {
-      inkscapeShell.once('close', () => res());
-    });
-  });
 
   ctx.using(['console'], (ctx) => ctx.plugin(MemesProvider, config));
+  ctx.using(['database'], (ctx) => {
+    ctx.model.extend(
+      'meme',
+      {
+        filename: 'string',
+        author: 'unsigned',
+        flag: {
+          type: 'unsigned',
+          initial: 0,
+        },
+      },
+      {
+        primary: 'filename',
+      },
+    );
+  });
 
   ctx
     .command('meme <img:string> [...args:string]', '生成梗图', {
@@ -65,32 +89,46 @@ export async function apply(
       if (!session) throw new Error('No session.');
       if (!img) return session?.execute('help meme');
       try {
-        const imagePathXcf = path.join(config.imgDir, `${img}.xcf`);
-        const imagePathSvg = path.join(config.imgDir, `${img}.svg`);
-        let generated: Buffer;
-        if (fs.existsSync(imagePathSvg) && !options?.gimp) {
-          if (!inkscapeShell && fs.existsSync(imagePathXcf))
+        const pending = await getMemesPending(ctx);
+        const filenameXcf = `${img}.xcf`;
+        const filenameSvg = `${img}.svg`;
+        const imagePathXcf = path.join(config.imgDir, filenameXcf);
+        const imagePathSvg = path.join(config.imgDir, filenameSvg);
+        if (
+          !pending.includes(filenameSvg) &&
+          fs.existsSync(imagePathSvg) &&
+          !options?.gimp
+        ) {
+          if (!ctx.inkscape && fs.existsSync(imagePathXcf))
             throw new Error('No inkscape shell');
-          generated = await generateMemeInkscape(
+          await generateMemeInkscape(
             {
-              shell: inkscapeShell,
+              ctx,
               file: imagePathSvg,
-              tempOut: config.tempOut,
+              outPath: config.tempOut,
             },
             ...args,
           );
-        } else if (fs.existsSync(imagePathXcf) && !options?.inkscape)
-          generated = await generateMemeGIMP(
+        } else if (
+          !pending.includes(filenameXcf) &&
+          fs.existsSync(imagePathXcf) &&
+          !options?.inkscape
+        )
+          await generateMemeGIMP(
             {
               file: imagePathXcf,
-              tempOut: config.tempOut,
+              outPath: config.tempOut,
               gimpPath: config.gimpPath,
             },
             ...args,
           );
+        else if (pending.includes(filenameXcf))
+          return `梗图模板 ${filenameXcf} 正在审核中`;
+        else if (pending.includes(filenameSvg))
+          return `梗图模板 ${filenameSvg} 正在审核中`;
         else throw new MissingMemeTemplateError(img);
 
-        return segment.image(generated);
+        return segment.image(await promisify(fs.readFile)(config.tempOut));
       } catch (e) {
         if (e instanceof MissingMemeTemplateError)
           return `不存在梗图模板 ${e.memeTemplate}`;
@@ -101,12 +139,49 @@ export async function apply(
       }
     });
 
-  ctx.command('meme.list', '列出梗图模板').action(async () => {
-    const names = (await getMemes(config.imgDir)).map((n) => n.slice(0, -4));
-    return [...new Set(names)]
-      .sort()
-      .map((n, i) => `${i + 1}. ${n}`)
-      .slice(0, 20)
-      .join('\n');
+  ctx
+    .command('meme.list', '列出梗图模板')
+    .option('page', '-p <page> 指定页码')
+    .action(async ({ options }) => {
+      const names = (await getMemes(config.imgDir, ctx)).map((n) =>
+        n.slice(0, -4),
+      );
+      return formatList([...new Set(names)].sort(), {
+        size: config.listLimit,
+        pageNum: options?.page - 1 || 0,
+      });
+    });
+
+  ctx.using(['database'], (ctx) => {
+    ctx
+      .command('meme.approve <template:string>', '梗图模板审核工具', {
+        authority: config.authority.approve,
+      })
+      .option('list', '-l 列出待审核模板')
+      .option('page', '-p <page> 指定页码')
+      .action(async ({ options, session }, template) => {
+        if (options?.list)
+          return formatList(await getMemesPending(ctx), {
+            size: config.listLimit,
+            pageNum: options.page - 1 || 0,
+          });
+        if (!template) return session?.execute('help meme.approve');
+        const record = (
+          await ctx.database.get('meme', {
+            filename: template,
+          })
+        )?.[0];
+        if (!record) return `模板 ${template} 不存在`;
+        const newFlag = record.flag ^ Flag.approved;
+
+        await ctx.database.set(
+          'meme',
+          { filename: template },
+          { flag: newFlag },
+        );
+        return `模板 ${template} 已修改为 “${
+          newFlag & Flag.approved ? '已审核' : '待审核'
+        }”`;
+      });
   });
 }
