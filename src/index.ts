@@ -2,6 +2,7 @@ import {} from '@koishijs/plugin-rate-limit';
 import fs from 'fs';
 import { Context, segment } from 'koishi';
 import { lookpath } from 'lookpath';
+import PQueue from 'p-queue';
 import path from 'path';
 import { promisify } from 'util';
 import Inkscape from './inkscape';
@@ -13,6 +14,7 @@ import {
   getMemes,
   getMemesPending,
   MissingMemeTemplateError,
+  QueueLengthLimitError,
   ResolvedConfig,
 } from './utils';
 
@@ -29,10 +31,20 @@ declare module 'koishi' {
     meme: {
       filename: string;
       flag: number;
-      author?: number;
+      /** User.id */
+      author?: string;
     };
   }
+  interface EventMap {
+    /** Emitted when some memes are approved/unapproved */
+    'memes/approve'(
+      /** approved memes with file ext */
+      memes: string[],
+    ): void;
+  }
 }
+
+export let queue: PQueue;
 
 export const name = 'meme';
 export async function apply(
@@ -40,6 +52,7 @@ export async function apply(
   config: ResolvedConfig,
 ): Promise<void> {
   const logger = ctx.logger('meme');
+
   ctx.on('ready', async () => {
     const gimpPath = await lookpath(config.gimpPath, {});
     if (gimpPath) logger.info(`GIMP location: ${gimpPath}`);
@@ -54,6 +67,11 @@ export async function apply(
     } catch (e) {
       throw new Error(`Inkscape init error`);
     }
+    queue = new PQueue({ concurrency: 1 });
+  });
+
+  ctx.on('dispose', () => {
+    queue.clear();
   });
 
   ctx.using(['console'], (ctx) => ctx.plugin(MemesProvider, config));
@@ -62,7 +80,7 @@ export async function apply(
       'meme',
       {
         filename: 'string',
-        author: 'unsigned',
+        author: 'string',
         flag: {
           type: 'unsigned',
           initial: 0,
@@ -106,6 +124,8 @@ export async function apply(
               ctx,
               file: imagePathSvg,
               outPath: config.tempOut,
+              config,
+              priority: 2,
             },
             ...args,
           );
@@ -118,7 +138,8 @@ export async function apply(
             {
               file: imagePathXcf,
               outPath: config.tempOut,
-              gimpPath: config.gimpPath,
+              config,
+              priority: 2,
             },
             ...args,
           );
@@ -132,6 +153,8 @@ export async function apply(
       } catch (e) {
         if (e instanceof MissingMemeTemplateError)
           return `不存在梗图模板 ${e.memeTemplate}`;
+        else if (e instanceof QueueLengthLimitError)
+          return `服务繁忙，请稍后再试`;
         else {
           logger.warn(e);
           return '出了亿点问题';
@@ -179,6 +202,7 @@ export async function apply(
           { filename: template },
           { flag: newFlag },
         );
+        ctx.emit('memes/approve', [template]);
         return `模板 ${template} 已修改为 “${
           newFlag & Flag.approved ? '已审核' : '待审核'
         }”`;

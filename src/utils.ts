@@ -19,6 +19,8 @@ export type ResolvedConfig = {
     approve: number;
   };
   listLimit: number;
+  pendingLimit: number;
+  queueLimit: number;
 };
 type RecursivePartial<T> = {
   [P in keyof T]?: RecursivePartial<T[P]>;
@@ -48,6 +50,14 @@ export const Config: Schema<Config> = Schema.intersect([
     listLimit: Schema.number()
       .description('显示梗图列表时的最大长度')
       .default(10),
+    pendingLimit: Schema.number()
+      .description(
+        '待审核模板的最大数量，超出后将不允许无审核权限的用户上传新的模板',
+      )
+      .default(20),
+    queueLimit: Schema.number()
+      .description('图片生成队列的最大长度')
+      .default(5),
   }),
   Inkscape.Config,
 ]);
@@ -121,66 +131,92 @@ export async function getMemes(
   );
 }
 
+export class QueueLengthLimitError extends Error {
+  name = 'QueueLengthLimitError';
+  constructor(public currentSize: number, public maxSize: number) {
+    super();
+  }
+}
+
 export async function generateMemeGIMP(
   options: {
     /** With extension */
     file: string;
     outPath: string;
-    gimpPath: string;
+    config: ResolvedConfig;
+    priority?: number;
   },
   ...args: string[]
 ): Promise<void> {
-  const script = replaceScript(
-    await scmTemplate,
-    options.file,
-    options.outPath,
-    args.reduce((o, v, i) => {
-      o[`$${i + 1}`] = v;
-      return o;
-    }, {} as Record<string, string>),
+  const { queue } = await import('.');
+  if (queue.size >= options.config.queueLimit)
+    throw new QueueLengthLimitError(queue.size, options.config.queueLimit);
+  return await queue.add(
+    async () => {
+      const script = replaceScript(
+        await scmTemplate,
+        options.file,
+        options.outPath,
+        args.reduce((o, v, i) => {
+          o[`$${i + 1}`] = v;
+          return o;
+        }, {} as Record<string, string>),
+      );
+      logger.debug(script);
+
+      const childProcess = spawn(options.config.gimpPath, [
+        '-c',
+        '--no-interface',
+        '-b',
+        script,
+      ]);
+      childProcess.on('error', (e) => {
+        throw e;
+      });
+      childProcess.stderr.setEncoding('utf-8');
+      childProcess.stderr.on('data', (msg) => logger.warn('GIMP error', msg));
+
+      await new Promise((res) => {
+        childProcess.on('close', (code) => {
+          if (code) throw new Error(`GIMP closed with code ${code}`);
+          res(code);
+        });
+      });
+    },
+    { priority: options.priority || 0 },
   );
-  logger.debug(script);
-
-  const childProcess = spawn(options.gimpPath, [
-    '-c',
-    '--no-interface',
-    '-b',
-    script,
-  ]);
-  childProcess.on('error', (e) => {
-    throw e;
-  });
-  childProcess.stderr.setEncoding('utf-8');
-  childProcess.stderr.on('data', (msg) => logger.warn('GIMP error', msg));
-
-  await new Promise((res) => {
-    childProcess.on('close', (code) => {
-      if (code) throw new Error(`GIMP closed with code ${code}`);
-      res(code);
-    });
-  });
 }
 
 export async function generateMemeInkscape(
   options: {
-    ctx: Context;
     /** With extension */
     file: string;
+    ctx: Context;
     outPath: string;
+    config: ResolvedConfig;
+    priority?: number;
   },
   ...args: string[]
 ): Promise<void> {
-  const svgCode = await promisify(fs.readFile)(options.file, {
-    encoding: 'utf-8',
-  });
-  const changedSvgCode = args.reduce(
-    (svg, value, idx) => svg.replace(`__$${idx + 1}__`, value),
-    svgCode,
+  const { queue } = await import('.');
+  if (queue.size >= options.config.queueLimit)
+    throw new QueueLengthLimitError(queue.size, options.config.queueLimit);
+  return await queue.add(
+    async () => {
+      const svgCode = await promisify(fs.readFile)(options.file, {
+        encoding: 'utf-8',
+      });
+      const changedSvgCode = args.reduce(
+        (svg, value, idx) => svg.replace(`__$${idx + 1}__`, value),
+        svgCode,
+      );
+      await promisify(fs.writeFile)('temp.svg', changedSvgCode, {
+        encoding: 'utf-8',
+      });
+      await options.ctx.inkscape.svg2png('temp.svg', options.outPath);
+    },
+    { priority: options.priority || 0 },
   );
-  await promisify(fs.writeFile)('temp.svg', changedSvgCode, {
-    encoding: 'utf-8',
-  });
-  await options.ctx.inkscape.svg2png('temp.svg', options.outPath);
 }
 
 export function formatList(
