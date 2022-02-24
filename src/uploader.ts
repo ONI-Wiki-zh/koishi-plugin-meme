@@ -95,12 +95,12 @@ export default class MemesProvider extends DataService<MemesData> {
       ctx.console.addListener(
         'meme/approve',
         async (template) => {
-          const [record] = await ctx.database.get('meme', {
+          let [record] = await ctx.database.get('meme', {
             filename: template,
           });
           if (!record)
             if ((await getMemes(config.imgDir)).includes(template))
-              await ctx.database.create('meme', {
+              record = await ctx.database.create('meme', {
                 filename: template,
                 flag: 0 & Flag.approved,
               });
