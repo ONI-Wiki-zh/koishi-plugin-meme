@@ -113,7 +113,6 @@ export class MissingMemeTemplateError extends Error {
 
 export async function getMemesPending(ctx: Context): Promise<string[]> {
   const records = ctx.database ? await ctx.database.get('meme', {}) : [];
-  console.log(records);
   return records
     .filter((r) => !(r.flag & Flag.approved))
     .map((r) => r.filename);
