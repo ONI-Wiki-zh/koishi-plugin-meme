@@ -102,7 +102,7 @@ export default class MemesProvider extends DataService<MemesData> {
             if ((await getMemes(config.imgDir)).includes(template))
               record = await ctx.database.create('meme', {
                 filename: template,
-                flag: 0 & Flag.approved,
+                flag: 0 | Flag.approved, // default to approved
               });
             else throw new Error(`模板 ${template} 不存在`);
           const newFlag = record.flag ^ Flag.approved;
