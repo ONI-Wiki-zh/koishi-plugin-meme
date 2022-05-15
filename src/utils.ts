@@ -64,12 +64,12 @@ export const Config: Schema<Config> = Schema.intersect([
 const logger = new Logger('meme');
 
 function escapeScm(str: string): string {
-  return str.replace('"', '\\"').replace('\\', '\\\\');
+  return str.replace(/"/g, '\\"').replace(/\\/g, '\\\\');
 }
 
-const TO_REPLACE_COND = '(gimp-message "JS Interpolation here")';
-const TO_REPLACE_IN = 'IMAGE.xcf';
-const TO_REPLACE_OUT = 'OUT.png';
+const TO_REPLACE_COND = /\(gimp-message "JS Interpolation here"\)/g;
+const TO_REPLACE_IN = /IMAGE\.xcf/g;
+const TO_REPLACE_OUT = /OUT\.png/g;
 
 const scmCond = (cond: string): string => `(cond ${cond})`;
 
@@ -206,7 +206,8 @@ export async function generateMemeInkscape(
         encoding: 'utf-8',
       });
       const changedSvgCode = args.reduce(
-        (svg, value, idx) => svg.replace(`__$${idx + 1}__`, value),
+        (svg, value, idx) =>
+          svg.replace(new RegExp(`__\\$${idx + 1}__`, 'g'), value),
         svgCode,
       );
       await promisify(fs.writeFile)('temp.svg', changedSvgCode, {
